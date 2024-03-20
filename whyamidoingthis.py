@@ -5,7 +5,7 @@ from nltk.corpus import brown
 nlp = spacy.load("en_core_web_sm")
 
 #%%
-class raised_eyebrow:
+class HMM_Translator:
     def __init__(self, dictionary, text, corpus_file, tag_category):
         #use the dictionary to map text into word bank
         words = self.map_text(dictionary, text)
@@ -20,7 +20,7 @@ class raised_eyebrow:
 
         #make the corpus thingy
         self.tags_corpus = pd.read_csv(corpus_file,sep=",",index_col=0)
-    
+
     def map_text(self, dictionary, text):
         f = open(dictionary, "r")
         trans = {}
@@ -44,20 +44,21 @@ class raised_eyebrow:
         tags = pd.DataFrame(rows, columns=["word", "tags"])
         return tags
     
-    def generate_initial(self):
+    def train_initial(self):
         for i in self.tags_corpus.index:
             sentence = self.tags_corpus["tags"][i].split(" ")
             if sentence[0] in self.tags: 
                 self.initial_probabilities.loc[sentence[0]] += 1
+        #generate probabilities
         self.initial_probabilities.Counts = self.initial_probabilities.Counts.div(self.initial_probabilities.Counts.sum(), axis=0)
             
     def generate_hidden(self):
         for i in range(len(self.tagged_sent)):
             self.emission_matrix.loc[self.tagged_sent.loc[i, "tags"], self.tagged_sent.loc[i, "word"]] += 1
-        #normalize
+        #generate probabilities
         self.emission_matrix = self.emission_matrix.div(self.emission_matrix.sum(axis=1), axis=0)
     
-    def training_transition(self): 
+    def train_transition(self): 
         for i in self.tags_corpus.index:
             sentence = self.tags_corpus["tags"][i].split(" ")
             for i in range(len(sentence) - 1): 
@@ -68,22 +69,31 @@ class raised_eyebrow:
         self.transition_matrix = self.transition_matrix.div(self.transition_matrix.sum(axis=1), axis=0)
 
     def translate(self):
-        self.generate_initial()
+        self.train_initial()
         self.generate_hidden()
-        self.training_transition()
+        self.train_transition()
         
-        hidden = self.emission_matrix
-        transition = self.transition_matrix
+        hidden = self.emission_matrix.copy()
+        transition = self.transition_matrix.copy()
 
-        #shh don't ask why we didn't add the initial word to the sentence
+        #NOTE: from here, stuff gets kinda messy as I adjusted the code to get data for the presentation
+        #so if youre trying to run this, you may have to debug
         state = self.initial_probabilities.Counts.idxmax()
-        generated_states = []
+        generated_states = [state]
         generated_text = ""
+        probability = self.initial_probabilities.Counts[state]
+        word = hidden.loc[state].idxmax()
+        generated_text = generated_text + " " + word
+        hidden.drop(word, axis="columns", inplace=True)
+        if hidden.loc[state].sum() == 0:
+            transition.drop(state, axis="columns", inplace=True)
 
-        for _ in range(len(self.words)):
+        for _ in range(len(self.words)-1):
             # Pick the state with the highest transition probability from the current state
+            prev_state = state
             state = transition.loc[state].idxmax()
             generated_states.append(state)
+            probability *= transition.loc[prev_state][state]
 
             # Pick the observation with the highest emission probability from the current state
             # Check if word has been used, if so remove the column from emission and if sum of row = 0, remove from transition and emission
@@ -92,7 +102,7 @@ class raised_eyebrow:
             hidden.drop(word, axis="columns", inplace=True)
             if hidden.loc[state].sum() == 0:
                transition.drop(state, axis="columns", inplace=True)
-        return generated_states, generated_text
+        return generated_states, generated_text, probability
     
    # def run_analysis(self):
         
@@ -100,15 +110,26 @@ class raised_eyebrow:
 tags_corpus = pd.DataFrame(columns=["tags"])
 sentences = brown.sents()
 for sentence in sentences[:10000]:
-    tagged_sent = raised_eyebrow.pos_tagging((' '.join(sentence)), "POS")
+    tagged_sent = HMM_Translator.pos_tagging((' '.join(sentence)), "POS")
     tags_corpus.loc[len(tags_corpus.index)] = [' '.join(tagged_sent.tags)]
-f = tags_corpus.to_csv("tags_corpus.csv", sep=",")
+f = tags_corpus.to_csv("POS_corpus.csv", sep=",")
 #%%
 # Example usage:
 text = "to thine own self be true"
-translator = raised_eyebrow("translations.txt", text, "POS_corpus.csv","POS")
+translator = HMM_Translator("translations.txt", text, "POS_corpus.csv","POS")
 #%%
-states, sentence = translator.translate()
+states, sentence, probability = translator.translate()
+print(states, sentence, probability)
 
-
+# %%DEP timeee
+tags_corpus = pd.DataFrame(columns=["tags"])
+sentences = brown.sents()
+for sentence in sentences[:10000]:
+    tagged_sent = HMM_Translator.pos_tagging((' '.join(sentence)), "DEP")
+    tags_corpus.loc[len(tags_corpus.index)] = [' '.join(tagged_sent.tags)]
+f = tags_corpus.to_csv("DEP_corpus.csv", sep=",")
+# %%
+dep_translator = HMM_Translator("translations.txt", text, "DEP_corpus.csv","DEP")
+dstates, dsentence, dprobability = dep_translator.translate()
+print(dstates, dsentence, str(dprobability*100) + "% ")
 # %%
